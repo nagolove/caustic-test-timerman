@@ -10,7 +10,7 @@
 #include "koh_timerman.h"
 #include "time.h"
 #include "raylib.h"
-
+#include "koh_common.h"
 // }}}
 
 static bool verbose = false;
@@ -53,17 +53,15 @@ static bool t_update(T *t) {
     return true;
 }
 
-__attribute__((unused))
+//__attribute__((unused))
 static MunitResult test_new_free(const MunitParameter params[], void* data) {
-    TimerMan *tm = timerman_new(10, "x");
-    T t = { .duration_sec = 1, };
     InitWindow(800, 600, "testing koh_timerman");
     SetConfigFlags(FLAG_WINDOW_HIDDEN | FLAG_WINDOW_UNDECORATED);
     SetTargetFPS(120);
+    TimerMan *tm = timerman_new(10, "x");
+    T t = { .duration_sec = 1, };
     t_init(&t);
     while (!WindowShouldClose() && t_update(&t)) {
-        //static int i = 0;
-        //printf("test_new_free: i %d, t %f\n", i++, t.t);
     }
     CloseWindow();
     timerman_free(tm);
@@ -71,11 +69,120 @@ static MunitResult test_new_free(const MunitParameter params[], void* data) {
 }
 
 static bool tmr_on_update_duration(Timer *t) {
-    // printf("tmr_on_update:\n");
-    T *tt = t->data;
-    printf("tmr_on_update: amount %f, t %f\n", t->amount, tt->t);
+    //T *tt = t->data;
+
+    if (t->state == TS_ON_START)
+        munit_assert(t->amount == 0.);
+    else if (t->state == TS_ON_STOP)
+        munit_assert(t->amount == 1.);
+
+    /*
+    printf(
+        "tmr_on_update: amount %f, t %f, state %d\n",
+        t->amount, tt->t, t->state
+    );
+    */
+
     return false;
 }
+
+static int chain_cnt = 3;
+
+static bool tmr_on_update_chain(Timer *t) {
+    //T *tt = t->data;
+
+    if (t->state == TS_ON_START) {
+        munit_assert(t->amount == 0.);
+    } else if (t->state == TS_ON_STOP) {
+        munit_assert(t->amount == 1.);
+        TimerDef def = {
+            .data = t->data,
+            .sz = t->sz,
+            .on_update = t->on_update,
+            .on_start = t->on_start,
+            .on_stop = t->on_stop,
+            .duration = t->duration,
+        };
+        if (chain_cnt >= 0) {
+
+            // XXX: Не отрабатывает, только один
+
+            koh_term_color_set(KOH_TERM_YELLOW);
+            printf("tmr_on_update_chain: chain_cnt %d\n", chain_cnt);
+            koh_term_color_reset();
+
+            int err = timerman_add(t->tm, def);
+            munit_assert(err != -1);
+            chain_cnt--;
+        }
+    }
+
+    /*
+    printf(
+        "tmr_on_update: amount %f, t %f, state %d\n",
+        t->amount, tt->t, t->state
+    );
+    */
+
+    return false;
+}
+static MunitResult test_chain(const MunitParameter params[], void* data) {
+    printf("test_chain:\n");
+
+    InitWindow(800, 600, "testing koh_timerman");
+    SetConfigFlags(FLAG_WINDOW_UNDECORATED);
+    SetTargetFPS(120);
+
+    /*
+    rlImGuiSetup(&(struct igSetupOptions) {
+        .dark = false,
+        .font_path = "assets/djv.ttf",
+        .font_size_pixels = 40,
+        .ranges = (ImWchar[]){
+            0x0020, 0x00FF, // Basic Latin + Latin Supplement
+            0x0400, 0x044F, // Cyrillic
+            // XXX: symbols not displayed
+            // media buttons like record/play etc. Used in dotool_gui()
+            0x23CF, 0x23F5, 
+            0,
+        },
+    });
+    */
+
+    const float base_duration = 1.f;
+    T t = { .duration_sec = base_duration * (chain_cnt + 1), };
+    t_init(&t);
+    TimerMan *tm = timerman_new(10, "x");
+    int id = timerman_add(tm, (TimerDef) {
+        .on_start = tmr_on_update_chain,
+        .on_update = tmr_on_update_chain,
+        .on_stop = tmr_on_update_chain,
+        .duration = base_duration,
+        .data = &t,
+        .sz = 0,
+    });
+    munit_assert(id != -1);
+
+    while (!WindowShouldClose() && t_update(&t)) {
+        //printf("test_duration: t %f\n", t.t);
+
+        /*
+        BeginDrawing();
+        rlImGuiBegin();
+        timerman_window_gui(tm);
+        rlImGuiEnd();
+        EndDrawing();
+        */
+
+        timerman_update(tm);
+    }
+    printf("chain_cnt %d\n", chain_cnt);
+    munit_assert(chain_cnt == 0);
+    CloseWindow();
+    timerman_free(tm);
+    return MUNIT_OK;
+}
+
 
 static MunitResult test_duration(const MunitParameter params[], void* data) {
     printf("test_duration:\n");
@@ -86,16 +193,18 @@ static MunitResult test_duration(const MunitParameter params[], void* data) {
 
     T t = { .duration_sec = 1, };
     t_init(&t);
-    TimerMan *tm = timerman_new(10, "x");
-    timerman_add(tm, (TimerDef) {
+    TimerMan *tm = timerman_new(1, "");
+    int id = timerman_add(tm, (TimerDef) {
+        .on_start = tmr_on_update_duration,
         .on_update = tmr_on_update_duration,
-        .duration = 0.5,
+        .on_stop = tmr_on_update_duration,
+        .duration = 1.,
         .data = &t,
         .sz = 0,
     });
-
+    munit_assert(id != -1);
     while (!WindowShouldClose() && t_update(&t)) {
-        printf("test_duration: t %f\n", t.t);
+        //printf("test_duration: t %f\n", t.t);
         timerman_update(tm);
     }
     CloseWindow();
@@ -105,7 +214,6 @@ static MunitResult test_duration(const MunitParameter params[], void* data) {
 
 static MunitTest t_suite_common[] = {
 
-    /*
     {
         .name =  "/test_new_free",
         .test = test_new_free,
@@ -114,11 +222,19 @@ static MunitTest t_suite_common[] = {
         .options = MUNIT_TEST_OPTION_NONE,
         .parameters = NULL,
     },
-    */
 
     {
         .name =  "/test_duration",
         .test = test_duration,
+        .setup = NULL,
+        .tear_down = NULL,
+        .options = MUNIT_TEST_OPTION_NONE,
+        .parameters = NULL,
+    },
+
+    {
+        .name =  "/test_chain",
+        .test = test_chain,
         .setup = NULL,
         .tear_down = NULL,
         .options = MUNIT_TEST_OPTION_NONE,
@@ -144,6 +260,13 @@ static const MunitSuite suite_root = {
     .options = MUNIT_SUITE_OPTION_NONE,
     .verbose = &verbose,
 };
+
+/*
+__attribute__((constructor))
+static void disable_abort_on_error(void) {
+    setenv("ASAN_OPTIONS", "abort_on_error=0", 1);
+}
+*/
 
 int main(int argc, char **argv) {
     return munit_suite_main(&suite_root, (void*) "µnit", argc, argv);
