@@ -86,7 +86,24 @@ static bool tmr_on_update_duration(Timer *t) {
     return false;
 }
 
-static int chain_cnt = 3;
+static int chain_cnt = 3,
+           remove_cnt_1 = 0,
+           remove_cnt_2 = 0;
+
+static bool tmr_on_update_remove_2(Timer *t) {
+    if (remove_cnt_2 >= 10)
+        return true;
+
+    remove_cnt_2++;
+    return false;
+}
+
+static bool tmr_on_update_remove_1(Timer *t) {
+    remove_cnt_1++;
+    munit_assert(t->state != TS_ON_UPDATE);
+    // удалить сразу
+    return true;
+}
 
 static bool tmr_on_update_chain(Timer *t) {
     //T *tt = t->data;
@@ -126,6 +143,67 @@ static bool tmr_on_update_chain(Timer *t) {
 
     return false;
 }
+
+static MunitResult test_remove(const MunitParameter params[], void* data) {
+
+    {
+        InitWindow(800, 600, "testing koh_timerman");
+        SetConfigFlags(FLAG_WINDOW_UNDECORATED);
+        SetTargetFPS(60);
+
+        const float base_duration = 1.f;
+        T t = { .duration_sec = base_duration };
+        t_init(&t);
+        TimerMan *tm = timerman_new(1, "x");
+        int id = timerman_add(tm, (TimerDef) {
+            .on_start = tmr_on_update_remove_1,
+            .on_update = tmr_on_update_remove_1,
+            .on_stop = tmr_on_update_remove_1,
+            .duration = base_duration / 2.,
+            .data = &t,
+            .sz = 0,
+        });
+        munit_assert(id != -1);
+
+        while (!WindowShouldClose() && t_update(&t)) {
+            timerman_update(tm);
+        }
+
+        munit_assert_int(remove_cnt_1, ==, 1 /* start */ + 1 /* stop */);
+        CloseWindow();
+        timerman_free(tm);
+    }
+
+    {
+        InitWindow(800, 600, "testing koh_timerman");
+        SetConfigFlags(FLAG_WINDOW_UNDECORATED);
+        SetTargetFPS(60);
+
+        const float base_duration = 1.f;
+        T t = { .duration_sec = base_duration };
+        t_init(&t);
+        TimerMan *tm = timerman_new(1, "x");
+        int id = timerman_add(tm, (TimerDef) {
+            .on_start = tmr_on_update_remove_2,
+            .on_update = tmr_on_update_remove_2,
+            .on_stop = tmr_on_update_remove_2,
+            .duration = base_duration,
+            .data = &t,
+            .sz = 0,
+        });
+        munit_assert(id != -1);
+
+        while (!WindowShouldClose() && t_update(&t)) {
+            timerman_update(tm);
+        }
+        munit_assert_int(remove_cnt_2, ==, 10);
+        CloseWindow();
+        timerman_free(tm);
+    }
+
+    return MUNIT_OK;
+}
+
 static MunitResult test_chain(const MunitParameter params[], void* data) {
     printf("test_chain:\n");
 
@@ -152,7 +230,7 @@ static MunitResult test_chain(const MunitParameter params[], void* data) {
     const float base_duration = 1.f;
     T t = { .duration_sec = base_duration * (chain_cnt + 1), };
     t_init(&t);
-    TimerMan *tm = timerman_new(10, "x");
+    TimerMan *tm = timerman_new(2, "x");
     int id = timerman_add(tm, (TimerDef) {
         .on_start = tmr_on_update_chain,
         .on_update = tmr_on_update_chain,
@@ -241,6 +319,14 @@ static MunitTest t_suite_common[] = {
         .parameters = NULL,
     },
 
+    {
+        .name =  "/test_remove",
+        .test = test_remove,
+        .setup = NULL,
+        .tear_down = NULL,
+        .options = MUNIT_TEST_OPTION_NONE,
+        .parameters = NULL,
+    },
     {
         .name =  NULL,
         .test = NULL,
